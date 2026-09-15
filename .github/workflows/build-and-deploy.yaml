@@ -8,8 +8,8 @@ on:
       - "*"
 
 jobs:
-  build-and-deploy:
-    runs-on: Het-8v-16G
+  build:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -22,6 +22,22 @@ jobs:
       - name: Build binary
         run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o file-gateway ./cmd/server
 
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: file-gateway
+          path: file-gateway
+          retention-days: 1
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: file-gateway
+
       - name: Configure SSH
         uses: webfactory/ssh-agent@v0.5.3
         with:
@@ -31,6 +47,7 @@ jobs:
         env:
           SERVER_IP: ${{ secrets.SERVER_IP }}
         run: |
+          chmod +x file-gateway
           ssh -o StrictHostKeyChecking=no root@$SERVER_IP "mkdir -p /srv/file-gateway"
           scp -o StrictHostKeyChecking=no file-gateway root@$SERVER_IP:/srv/file-gateway/file-gateway.new
 
