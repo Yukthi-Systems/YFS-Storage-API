@@ -1,0 +1,46 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - "main"
+    tags:
+      - "*"
+
+jobs:
+  build-and-deploy:
+    runs-on: Het-8v-16G
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binary
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o file-gateway ./cmd/server
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.5.3
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Upload binary and static assets
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+        run: |
+          ssh -o StrictHostKeyChecking=no root@$SERVER_IP "mkdir -p /srv/file-gateway"
+          scp -o StrictHostKeyChecking=no file-gateway root@$SERVER_IP:/srv/file-gateway/file-gateway.new
+
+      - name: Restart service
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+        run: |
+          ssh -o StrictHostKeyChecking=no root@$SERVER_IP << 'EOF'
+            mv /srv/file-gateway/file-gateway.new /srv/file-gateway/file-gateway
+            chmod +x /srv/file-gateway/file-gateway
+            systemctl restart file-gateway
+            systemctl --no-pager status file-gateway
+          EOF

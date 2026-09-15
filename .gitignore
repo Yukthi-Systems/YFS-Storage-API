@@ -1,0 +1,11 @@
+/bin/
+/dist/
+/data/
+*.exe
+*.test
+.env
+.env.*
+!.env.example
+CLAUDE.md
+/postman
+/logs
