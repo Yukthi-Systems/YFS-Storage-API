@@ -8,6 +8,7 @@ import (
 	"github.com/Yukthi-Systems/YFS-Storage-API/internal/middleware"
 	"github.com/Yukthi-Systems/YFS-Storage-API/internal/service/download"
 	"github.com/Yukthi-Systems/YFS-Storage-API/internal/service/file"
+	"github.com/Yukthi-Systems/YFS-Storage-API/internal/service/purge"
 	"github.com/Yukthi-Systems/YFS-Storage-API/internal/service/session"
 	"github.com/Yukthi-Systems/YFS-Storage-API/internal/service/wopi"
 	"github.com/Yukthi-Systems/YFS-Storage-API/internal/token"
@@ -19,6 +20,11 @@ type Handlers struct {
 	Session  *session.Service
 	File     *file.Service
 	Download *download.Service
+	// Purge is the durable delete queue backing /files/delete: it
+	// persists every requested path to Redis before the handler responds,
+	// then removes the underlying files in the background, resuming
+	// automatically across restarts. See internal/service/purge.
+	Purge *purge.Queue
 	// Stream   *stream.Service
 	// Media    *media.Service
 	WOPI *wopi.Service
@@ -35,12 +41,20 @@ type Handlers struct {
 	// MaxUploadBatchSize caps how many files a single /sessions/upload
 	// request may authorize at once.
 	MaxUploadBatchSize int
+	// MaxDeleteBatchSize caps how many paths a single /files/delete
+	// request may enqueue at once.
+	MaxDeleteBatchSize int
 
 	// DownloadCorsAllowedOrigins is a comma-separated list of exact
 	// origins allowed to make cross-origin browser requests (fetch/XHR)
 	// to /download/{fileID}. Empty allows any origin. See
 	// middleware.CORS.
 	DownloadCorsAllowedOrigins string
+
+	// WOPISessionTTL is how long a WOPI session (Collabora's
+	// access_token) stays valid — the Rust API's grant request carries
+	// no per-request TTL, so this is the only source for it.
+	WOPISessionTTL time.Duration
 
 	Logger *slog.Logger
 }
@@ -73,10 +87,10 @@ func (h *Handlers) Register(mux *http.ServeMux, tusBasePath string) {
 	// interpret. Locked to the Rust API via X-API-Token.
 	mux.Handle("POST /files/stat", internalOnly(http.HandlerFunc(h.handleFileStat)))
 	mux.Handle("POST /files/delete", internalOnly(http.HandlerFunc(h.handleFileDelete)))
-	mux.Handle("POST /files/restore", internalOnly(http.HandlerFunc(h.handleFileRestore)))
-	mux.Handle("POST /files/purge", internalOnly(http.HandlerFunc(h.handleFilePurge)))
-	mux.Handle("POST /files/copy", internalOnly(http.HandlerFunc(h.handleFileCopy)))
-	mux.Handle("POST /files/purge-prefix", internalOnly(http.HandlerFunc(h.handleFilePurgePrefix)))
+	// mux.Handle("POST /files/restore", internalOnly(http.HandlerFunc(h.handleFileRestore)))
+	// mux.Handle("POST /files/purge", internalOnly(http.HandlerFunc(h.handleFilePurge)))
+	// mux.Handle("POST /files/copy", internalOnly(http.HandlerFunc(h.handleFileCopy)))
+	// mux.Handle("POST /files/purge-prefix", internalOnly(http.HandlerFunc(h.handleFilePurgePrefix)))
 
 	// End-user download/stream/media, authorized by the token minted
 	// during session creation. CORS'd because, unlike every other route

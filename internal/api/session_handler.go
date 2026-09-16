@@ -211,21 +211,58 @@ func (h *Handlers) handleCreateStreamSession(w http.ResponseWriter, r *http.Requ
 	utils.WriteJSON(w, http.StatusCreated, result)
 }
 
+// createWOPISessionRequest mirrors the Rust API's FileStorageWopiAPI
+// struct field-for-field.
+type createWOPISessionRequest struct {
+	FileName string `json:"file_name"`
+	// FileLocation is the complete storage key, given verbatim by the
+	// Rust API. Unlike upload/download, it carries no "<base_url>;"
+	// prefix to split off — that half travels separately as ServerHost.
+	FileLocation string `json:"file_location"`
+	// ServerHost is the storage node's public host for this file (e.g.
+	// "https://store-1.files.test.yukthi.net"), folded into the
+	// returned WOPI URL so Collabora calls the node that actually holds
+	// the file — the WOPI equivalent of DownloadFileInput.BaseURL.
+	ServerHost string `json:"server_host"`
+	FileID     string `json:"file_id"`
+	OwnerID    string `json:"owner_id"`
+	// UserID and UserName identify the person the session is granted
+	// to, cached so CheckFileInfo can answer Collabora's UserId/
+	// UserFriendlyName without another round trip to the Rust API.
+	UserID            string `json:"user_id"`
+	UserName          string `json:"user_name"`
+	LatestFileVersion int32  `json:"latest_file_version"`
+	CanWrite          bool   `json:"can_write"`
+}
+
 func (h *Handlers) handleCreateWOPISession(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeGrantRequest(w, r)
-	if !ok {
+	var req createWOPISessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.WriteError(w, http.StatusBadRequest, "invalid_body", err.Error())
+		return
+	}
+	if req.FileLocation == "" || req.FileID == "" {
+		utils.WriteError(w, http.StatusBadRequest, "missing_fields", "file_location and file_id are required")
 		return
 	}
 	result, err := h.Session.CreateWOPISession(r.Context(), session.GrantInput{
-		Path: req.Path, FileID: req.FileID, Version: req.Version, CanWrite: req.CanWrite,
-		TTL: time.Duration(req.TTLSeconds) * time.Second,
+		Path:     req.FileLocation,
+		FileID:   req.FileID,
+		Version:  strconv.FormatInt(int64(req.LatestFileVersion), 10),
+		CanWrite: req.CanWrite,
+		Filename: req.FileName,
+		OwnerID:  req.OwnerID,
+		UserID:   req.UserID,
+		UserName: req.UserName,
+		BaseURL:  req.ServerHost,
+		TTL:      h.WOPISessionTTL,
 	})
 	if err != nil {
 		h.Logger.Error("create wopi session failed", "error", err)
 		utils.WriteError(w, http.StatusInternalServerError, "session_error", "failed to create wopi session")
 		return
 	}
-	middleware.AddLogFields(r.Context(), slog.String("path", req.Path), slog.String("file_id", req.FileID))
+	middleware.AddLogFields(r.Context(), slog.String("path", req.FileLocation), slog.String("file_id", req.FileID))
 	utils.WriteJSON(w, http.StatusCreated, result)
 }
 

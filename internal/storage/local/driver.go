@@ -185,6 +185,47 @@ func (d *Driver) DeletePrefix(ctx context.Context, prefix string) error {
 	return nil
 }
 
+// ListPrefix walks the directory tree rooted at prefix, calling fn once
+// per file found (skipping directory entries themselves). A prefix that
+// doesn't exist on disk simply yields no calls, matching Delete's "not
+// found is not an error" convention rather than failing the walk.
+func (d *Driver) ListPrefix(ctx context.Context, prefix string, fn func(key string) error) error {
+	if strings.TrimSpace(prefix) == "" {
+		return errors.New("local: refusing to list an empty prefix")
+	}
+	root, err := d.resolve(prefix)
+	if err != nil {
+		return err
+	}
+	if root == d.basePath {
+		return errors.New("local: refusing to list the storage root")
+	}
+
+	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(d.basePath, path)
+		if err != nil {
+			return err
+		}
+		return fn(filepath.ToSlash(rel))
+	})
+	if err != nil && errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 func (d *Driver) Exists(ctx context.Context, key string) (bool, error) {
 	path, err := d.resolve(key)
 	if err != nil {

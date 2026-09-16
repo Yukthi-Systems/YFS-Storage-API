@@ -49,6 +49,9 @@ type FileInfo struct {
 	Version          string `json:"Version"`
 	UserCanWrite     bool   `json:"UserCanWrite"`
 	LastModifiedTime string `json:"LastModifiedTime,omitempty"`
+	OwnerID          string `json:"OwnerId,omitempty"`
+	UserID           string `json:"UserId,omitempty"`
+	UserFriendlyName string `json:"UserFriendlyName,omitempty"`
 }
 
 // Service implements the WOPI host operations against a storage.Storage
@@ -65,7 +68,11 @@ func New(store storage.Storage, locks LockStore, lockTTL time.Duration) *Service
 }
 
 // CheckFileInfo answers WOPI's CheckFileInfo for the file at path.
-func (s *Service) CheckFileInfo(ctx context.Context, path, fileID, filename string, canWrite bool) (FileInfo, error) {
+// ownerID, userID and userName are the identity fields the Rust API
+// baked into the session's claims at grant time (see
+// session.GrantInput) — CheckFileInfo only ever echoes them back, it
+// never decides ownership or identity itself.
+func (s *Service) CheckFileInfo(ctx context.Context, path, fileID, filename string, canWrite bool, ownerID, userID, userName string) (FileInfo, error) {
 	meta, err := s.store.Stat(ctx, path)
 	if err != nil {
 		return FileInfo{}, fmt.Errorf("wopi: stat: %w", err)
@@ -81,6 +88,9 @@ func (s *Service) CheckFileInfo(ctx context.Context, path, fileID, filename stri
 		Version:          meta.ETag,
 		UserCanWrite:     canWrite,
 		LastModifiedTime: meta.ModTime.UTC().Format(time.RFC3339),
+		OwnerID:          ownerID,
+		UserID:           userID,
+		UserFriendlyName: userName,
 	}, nil
 }
 

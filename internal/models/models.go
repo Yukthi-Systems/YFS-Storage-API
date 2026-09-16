@@ -44,6 +44,13 @@ type Claims struct {
 	MaxUploadSize int64  `json:"max_upload_size,omitempty"`
 	Filename      string `json:"filename,omitempty"`
 	CanWrite      bool   `json:"can_write,omitempty"`
+	// UserID and UserName identify the person the WOPI session was
+	// granted to (as opposed to OwnerID, the file's owner) — distinct
+	// whenever an editor is working on a file they don't own. Cached
+	// here purely so CheckFileInfo can echo WOPI's UserId/
+	// UserFriendlyName without a round trip to the Rust API.
+	UserID   string `json:"user_id,omitempty"`
+	UserName string `json:"user_name,omitempty"`
 	// BatchID is the same across every file created by one
 	// /sessions/upload request, even though each file gets its own
 	// independent token/TTL. Unused today; it exists so a future
@@ -88,8 +95,14 @@ type DownloadSession struct {
 	OwnerID     string    `json:"owner_id,omitempty"`
 	FileVersion int32     `json:"file_version,omitempty"`
 	ExpiresAt   time.Time `json:"expires_at"`
-	URL         string    `json:"url"`
-	Token       string    `json:"token"`
+	// AccessTokenTTL is ExpiresAt as Unix milliseconds — the exact
+	// value and unit WOPI's access_token_ttl parameter expects (an
+	// absolute expiry timestamp, not a duration, despite the name), so
+	// it can be forwarded straight into the Collabora iframe URL/config
+	// with no conversion on the caller's side.
+	AccessTokenTTL int64  `json:"access_token_ttl"`
+	URL            string `json:"url"`
+	AccessToken    string `json:"access_token"`
 }
 
 // DownloadSessionBatch is the response to a batch download-session

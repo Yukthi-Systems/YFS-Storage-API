@@ -38,13 +38,6 @@ func (s *Service) Exists(ctx context.Context, path string) (bool, error) {
 	return s.store.Exists(ctx, path)
 }
 
-// Delete soft-deletes the file at path by moving it to trashPath, both
-// supplied by the caller. It does not touch metadata — the Rust API is
-// responsible for marking the file deleted there.
-func (s *Service) Delete(ctx context.Context, path, trashPath string) error {
-	return s.store.Move(ctx, path, trashPath)
-}
-
 // Restore moves a file back out of trashPath to path.
 func (s *Service) Restore(ctx context.Context, trashPath, path string) error {
 	return s.store.Move(ctx, trashPath, path)

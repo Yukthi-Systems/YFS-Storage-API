@@ -111,6 +111,20 @@ type Storage interface {
 	// Copy duplicates a file from srcKey to dstKey, leaving srcKey
 	// intact.
 	Copy(ctx context.Context, srcKey, dstKey string) error
+
+	// ListPrefix calls fn once for every file stored under prefix
+	// (interpreted as a directory boundary, i.e. prefix + "/"), stopping
+	// and returning fn's error the moment it returns one. A prefix with
+	// nothing under it (including one that doesn't exist at all) simply
+	// yields no calls to fn, not an error.
+	//
+	// Implementations must stream keys rather than buffering the whole
+	// listing in memory, so callers (e.g. a recursive delete walking an
+	// entire org's or user's storage) can use it over arbitrarily large
+	// subtrees. Callers that want to bound how much work one ListPrefix
+	// call does should have fn itself check ctx and return its error,
+	// since ListPrefix does not otherwise limit how many keys it visits.
+	ListPrefix(ctx context.Context, prefix string, fn func(key string) error) error
 }
 
 // SpaceUsage reports a storage backend's capacity, in bytes, at a point

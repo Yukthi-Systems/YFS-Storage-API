@@ -32,7 +32,7 @@ func (h *Handlers) handleWOPICheckFileInfo(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	info, err := h.WOPI.CheckFileInfo(r.Context(), claims.Path, fileID, claims.Filename, claims.CanWrite)
+	info, err := h.WOPI.CheckFileInfo(r.Context(), claims.Path, fileID, claims.Filename, claims.CanWrite, claims.OwnerID, claims.UserID, claims.UserName)
 	if err != nil {
 		writeStreamError(w, err)
 		return

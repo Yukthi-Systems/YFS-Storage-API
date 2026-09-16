@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -48,6 +49,45 @@ func (h *Handlers) handleFileStat(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSON(w, http.StatusOK, info)
 }
 
+// handleFileDelete permanently deletes a batch of storage paths. The Rust
+// API has already applied all trash/grace-period logic on its side (in
+// its own metadata store) and hands over the final list of paths to
+// remove — this endpoint does not move anything to trash itself. A path
+// ending in "/" (e.g. an org, user, or folder root) is deleted
+// recursively; anything else is deleted as a single file. The batch is
+// durably recorded before responding, so a 202 here means the deletions
+// will happen even if this process crashes or restarts before getting to
+// them; it does not mean the files are gone yet. See
+// internal/service/purge for the actual delete/retry/resume logic.
+func (h *Handlers) handleFileDelete(w http.ResponseWriter, r *http.Request) {
+	var paths []string
+	if err := json.NewDecoder(r.Body).Decode(&paths); err != nil {
+		utils.WriteError(w, http.StatusBadRequest, "invalid_body", err.Error())
+		return
+	}
+	if len(paths) == 0 {
+		utils.WriteError(w, http.StatusBadRequest, "missing_fields", "at least one path is required")
+		return
+	}
+	if h.MaxDeleteBatchSize > 0 && len(paths) > h.MaxDeleteBatchSize {
+		utils.WriteError(w, http.StatusBadRequest, "batch_too_large", fmt.Sprintf("at most %d paths per request", h.MaxDeleteBatchSize))
+		return
+	}
+	for _, p := range paths {
+		if p == "" {
+			utils.WriteError(w, http.StatusBadRequest, "missing_fields", "paths must not be empty")
+			return
+		}
+	}
+	middleware.AddLogFields(r.Context(), slog.Int("count", len(paths)))
+
+	if err := h.Purge.Enqueue(r.Context(), paths); err != nil {
+		utils.WriteError(w, http.StatusInternalServerError, "enqueue_error", err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
 type moveRequest struct {
 	Path      string `json:"path"`
 	TrashPath string `json:"trash_path"`
@@ -64,20 +104,6 @@ func decodeMoveRequest(w http.ResponseWriter, r *http.Request) (moveRequest, boo
 		return req, false
 	}
 	return req, true
-}
-
-func (h *Handlers) handleFileDelete(w http.ResponseWriter, r *http.Request) {
-	req, ok := decodeMoveRequest(w, r)
-	if !ok {
-		return
-	}
-	middleware.AddLogFields(r.Context(), slog.String("path", req.Path), slog.String("trash_path", req.TrashPath))
-
-	if err := h.File.Delete(r.Context(), req.Path, req.TrashPath); err != nil {
-		writeFileError(w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handlers) handleFileRestore(w http.ResponseWriter, r *http.Request) {

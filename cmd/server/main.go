@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 	"github.com/Yukthi-Systems/YFS-Storage-API/internal/rustapi"
 	"github.com/Yukthi-Systems/YFS-Storage-API/internal/service/download"
 	"github.com/Yukthi-Systems/YFS-Storage-API/internal/service/file"
+	"github.com/Yukthi-Systems/YFS-Storage-API/internal/service/purge"
 	"github.com/Yukthi-Systems/YFS-Storage-API/internal/service/session"
 	"github.com/Yukthi-Systems/YFS-Storage-API/internal/service/upload"
 	"github.com/Yukthi-Systems/YFS-Storage-API/internal/service/wopi"
@@ -72,6 +72,14 @@ func run() error {
 		return fmt.Errorf("initializing token issuer: %w", err)
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	purgeQueue := purge.New(rdb, store, logger, cfg.DeleteWorkerCount)
+	if err := purgeQueue.Start(ctx); err != nil {
+		return fmt.Errorf("starting purge queue: %w", err)
+	}
+
 	rustClient := rustapi.New(rustapi.Config{
 		BaseURL: cfg.RustCallbackBaseURL,
 		APIKey:  cfg.RustCallbackAPIKey,
@@ -91,25 +99,23 @@ func run() error {
 		return fmt.Errorf("initializing tus handler: %w", err)
 	}
 
-	wopiURLBase := "/wopi/files/"
-	if cfg.WOPIHostBaseURL != "" {
-		wopiURLBase = strings.TrimRight(cfg.WOPIHostBaseURL, "/") + "/wopi/files/"
-	}
-
 	handlers := &api.Handlers{
 		Issuer: issuer,
 		Session: session.New(issuer, store, cfg.MaxStorageUsagePercent, session.URLBases{
 			Upload:   cfg.TusBasePath,
 			Download: "/download/",
-			WOPI:     wopiURLBase,
+			WOPI:     "/wopi/files/",
 		}),
 		File:                       file.New(store),
 		Download:                   download.New(store),
+		Purge:                      purgeQueue,
 		Tus:                        tusHandler,
 		RustAPIToken:               cfg.RustAPIToken,
 		StorageBackoff:             cfg.StorageBackoff,
 		MaxUploadBatchSize:         cfg.MaxUploadBatchSize,
+		MaxDeleteBatchSize:         cfg.MaxDeleteBatchSize,
 		DownloadCorsAllowedOrigins: cfg.DownloadCorsAllowedOrigins,
+		WOPISessionTTL:             cfg.WOPISessionTTL,
 		Logger:                     logger,
 		WOPI:                       wopi.New(store, wopi.NewMemoryLockStore(), 30*time.Minute),
 	}
@@ -127,8 +133,6 @@ func run() error {
 		WriteTimeout: cfg.WriteTimeout,
 		IdleTimeout:  cfg.IdleTimeout,
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	serveErr := make(chan error, 1)
 	go func() {

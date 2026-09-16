@@ -79,6 +79,13 @@ type Config struct {
 	// blob cached in Redis under the resulting token.
 	MaxUploadBatchSize int
 
+	// MaxDeleteBatchSize caps how many paths a single /files/delete
+	// request may enqueue at once.
+	MaxDeleteBatchSize int
+	// DeleteWorkerCount is the number of concurrent goroutines the purge
+	// queue uses to remove files enqueued via /files/delete.
+	DeleteWorkerCount int
+
 	// Tus
 	TusBasePath      string
 	TusMaxUploadSize int64
@@ -101,6 +108,12 @@ type Config struct {
 	// allows any origin.
 	DownloadCorsAllowedOrigins string
 
+	// WOPISessionTTL is how long a WOPI session (Collabora's
+	// access_token) stays valid. Unlike upload/download/stream, the
+	// Rust API's WOPI grant request carries no per-request TTL, so this
+	// is the only source for it.
+	WOPISessionTTL time.Duration
+
 	// Logging
 	LogLevel      string
 	LogOutput     string // "file" or "stdout"
@@ -109,9 +122,6 @@ type Config struct {
 	LogMaxSizeMB  int
 	LogMaxBackups int
 	LogMaxAgeDays int
-
-	// WOPI
-	WOPIHostBaseURL string
 
 	// RustCallbackBaseURL is the Rust API's own base URL, e.g.
 	// "https://yfs-api.test.yukthi.net", used by the Storage API to
@@ -157,6 +167,8 @@ func Load() (*Config, error) {
 		MaxStorageUsagePercent: getEnvFloat("MAX_STORAGE_USAGE_PERCENT", 90),
 		StorageBackoff:         getEnvDuration("STORAGE_BACKOFF", 30*time.Second),
 		MaxUploadBatchSize:     getEnvInt("MAX_UPLOAD_BATCH_SIZE", 100),
+		MaxDeleteBatchSize:     getEnvInt("MAX_DELETE_BATCH_SIZE", 1000),
+		DeleteWorkerCount:      getEnvInt("DELETE_WORKER_COUNT", 8),
 
 		TusBasePath:           getEnv("TUS_BASE_PATH", "/upload/tus/"),
 		TusMaxUploadSize:      getEnvInt64("TUS_MAX_UPLOAD_SIZE", 10*1024*1024*1024), // 10GiB
@@ -165,6 +177,8 @@ func Load() (*Config, error) {
 
 		DownloadCorsAllowedOrigins: getEnv("DOWNLOAD_CORS_ALLOWED_ORIGINS", ""),
 
+		WOPISessionTTL: getEnvDuration("WOPI_SESSION_TTL", 30*time.Minute),
+
 		LogLevel:      getEnv("LOG_LEVEL", "info"),
 		LogOutput:     getEnv("LOG_OUTPUT", "file"),
 		LogDir:        getEnv("LOG_DIR", "./logs"),
@@ -172,8 +186,6 @@ func Load() (*Config, error) {
 		LogMaxSizeMB:  getEnvInt("LOG_MAX_SIZE_MB", 100),
 		LogMaxBackups: getEnvInt("LOG_MAX_BACKUPS", 7),
 		LogMaxAgeDays: getEnvInt("LOG_MAX_AGE_DAYS", 30),
-
-		WOPIHostBaseURL: getEnv("WOPI_HOST_BASE_URL", ""),
 
 		RustCallbackBaseURL: getEnv("RUST_CALLBACK_BASE_URL", "https://yfs-api.test.yukthi.net"),
 		RustCallbackAPIKey:  getEnv("RUST_CALLBACK_API_KEY", ""),
@@ -197,6 +209,12 @@ func (c *Config) validate() error {
 	}
 	if c.MaxUploadBatchSize <= 0 {
 		return fmt.Errorf("config: MAX_UPLOAD_BATCH_SIZE must be positive")
+	}
+	if c.MaxDeleteBatchSize <= 0 {
+		return fmt.Errorf("config: MAX_DELETE_BATCH_SIZE must be positive")
+	}
+	if c.DeleteWorkerCount <= 0 {
+		return fmt.Errorf("config: DELETE_WORKER_COUNT must be positive")
 	}
 	if c.TokenEncryptionKey == "" {
 		return fmt.Errorf("config: TOKEN_ENCRYPTION_KEY is required")

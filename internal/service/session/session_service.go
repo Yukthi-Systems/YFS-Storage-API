@@ -173,6 +173,17 @@ type GrantInput struct {
 	FileID   string
 	Version  string
 	CanWrite bool // relevant only for WOPI grants
+	// Filename, OwnerID, UserID and UserName are relevant only for WOPI
+	// grants — cached into the session so CheckFileInfo can answer
+	// Collabora without another round trip to the Rust API.
+	Filename string
+	OwnerID  string
+	UserID   string
+	UserName string
+	// BaseURL is the storage node's public host for this file (WOPI's
+	// server_host), folded into the returned WOPI URL the same way it
+	// is threaded through download sessions — see DownloadFileInput.
+	BaseURL string
 	// TTL is the session lifetime requested by the Rust API.
 	TTL time.Duration
 }
@@ -235,14 +246,15 @@ func (s *Service) CreateDownloadSession(ctx context.Context, in NewDownloadInput
 		}
 
 		sessions = append(sessions, models.DownloadSession{
-			FileName:    f.FileName,
-			FileID:      f.FileID,
-			FolderID:    f.FolderID,
-			OwnerID:     f.OwnerID,
-			FileVersion: f.FileVersion,
-			URL:         fmt.Sprintf("%s%s%s?token=%s", strings.TrimRight(f.BaseURL, "/"), s.urls.Download, f.FileID, url.QueryEscape(tok)),
-			Token:       tok,
-			ExpiresAt:   expiresAt,
+			FileName:       f.FileName,
+			FileID:         f.FileID,
+			FolderID:       f.FolderID,
+			OwnerID:        f.OwnerID,
+			FileVersion:    f.FileVersion,
+			URL:            fmt.Sprintf("%s%s%s?token=%s", strings.TrimRight(f.BaseURL, "/"), s.urls.Download, f.FileID, url.QueryEscape(tok)),
+			AccessToken:    tok,
+			ExpiresAt:      expiresAt,
+			AccessTokenTTL: expiresAt.UnixMilli(),
 		})
 	}
 
@@ -261,9 +273,10 @@ func (s *Service) CreateStreamSession(ctx context.Context, in GrantInput) (model
 		return models.DownloadSession{}, fmt.Errorf("session: generating stream token: %w", err)
 	}
 	return models.DownloadSession{
-		URL:       fmt.Sprintf("%s%s", s.urls.Stream, in.FileID),
-		Token:     tok,
-		ExpiresAt: expiresAt,
+		URL:            fmt.Sprintf("%s%s", s.urls.Stream, in.FileID),
+		AccessToken:    tok,
+		ExpiresAt:      expiresAt,
+		AccessTokenTTL: expiresAt.UnixMilli(),
 	}, nil
 }
 
@@ -275,13 +288,21 @@ func (s *Service) CreateWOPISession(ctx context.Context, in GrantInput) (models.
 		FileID:   in.FileID,
 		Version:  in.Version,
 		CanWrite: in.CanWrite,
+		Filename: in.Filename,
+		OwnerID:  in.OwnerID,
+		UserID:   in.UserID,
+		UserName: in.UserName,
 	}, in.TTL)
 	if err != nil {
 		return models.DownloadSession{}, fmt.Errorf("session: generating wopi token: %w", err)
 	}
 	return models.DownloadSession{
-		URL:       fmt.Sprintf("%s%s", s.urls.WOPI, in.FileID),
-		Token:     tok,
-		ExpiresAt: expiresAt,
+		FileName:       in.Filename,
+		FileID:         in.FileID,
+		OwnerID:        in.OwnerID,
+		URL:            fmt.Sprintf("%s%s%s", strings.TrimRight(in.BaseURL, "/"), s.urls.WOPI, in.FileID),
+		AccessToken:    tok,
+		ExpiresAt:      expiresAt,
+		AccessTokenTTL: expiresAt.UnixMilli(),
 	}, nil
 }
