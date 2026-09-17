@@ -85,6 +85,14 @@ type Config struct {
 	// DeleteWorkerCount is the number of concurrent goroutines the purge
 	// queue uses to remove files enqueued via /files/delete.
 	DeleteWorkerCount int
+	// PurgeDBPath is the SQLite file the purge queue durably records
+	// pending deletes in, so they survive a crash or restart. Empty
+	// (the default when PURGE_DB_PATH is unset) means cmd/server should
+	// fall back to purge.DefaultDBPath ("purge.db" next to the running
+	// binary) — that default can't be computed here without importing
+	// internal/service/purge, which would create an import cycle back
+	// through internal/storage.
+	PurgeDBPath string
 
 	// Tus
 	TusBasePath      string
@@ -169,6 +177,7 @@ func Load() (*Config, error) {
 		MaxUploadBatchSize:     getEnvInt("MAX_UPLOAD_BATCH_SIZE", 100),
 		MaxDeleteBatchSize:     getEnvInt("MAX_DELETE_BATCH_SIZE", 1000),
 		DeleteWorkerCount:      getEnvInt("DELETE_WORKER_COUNT", 8),
+		PurgeDBPath:            getEnv("PURGE_DB_PATH", ""),
 
 		TusBasePath:           getEnv("TUS_BASE_PATH", "/upload/tus/"),
 		TusMaxUploadSize:      getEnvInt64("TUS_MAX_UPLOAD_SIZE", 10*1024*1024*1024), // 10GiB

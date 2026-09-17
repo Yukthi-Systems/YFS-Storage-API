@@ -75,3 +75,21 @@ func FileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
 }
+
+// PathNextToBinary returns name resolved next to the currently running
+// binary (resolving a symlink if the binary was launched through one),
+// falling back to "./<name>" if the executable's own path can't be
+// determined. Useful as a zero-configuration default location for local
+// state that should live alongside the deployed binary (e.g. a durable
+// queue's database file) without callers needing to know the deployment
+// path.
+func PathNextToBinary(name string) string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "./" + name
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	return filepath.Join(filepath.Dir(exe), name)
+}

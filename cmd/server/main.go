@@ -75,7 +75,18 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	purgeQueue := purge.New(rdb, store, logger, cfg.DeleteWorkerCount)
+	purgeDBPath := cfg.PurgeDBPath
+	if purgeDBPath == "" {
+		purgeDBPath = purge.DefaultDBPath()
+	}
+	purgeDB, err := purge.OpenDB(purgeDBPath)
+	if err != nil {
+		return fmt.Errorf("opening purge database: %w", err)
+	}
+	defer purgeDB.Close()
+	logger.Info("purge queue database opened", "path", purgeDBPath)
+
+	purgeQueue := purge.New(purgeDB, store, logger, cfg.DeleteWorkerCount)
 	if err := purgeQueue.Start(ctx); err != nil {
 		return fmt.Errorf("starting purge queue: %w", err)
 	}
