@@ -162,7 +162,7 @@ func (s *Service) CreateUploadSession(ctx context.Context, in NewUploadInput) (m
 			FolderID: f.FolderID,
 			// FilePath:    f.Path,
 			MaxFileSize: f.MaxUploadSize,
-			HostedAt:    f.HostedAt,
+			BaseURL:     f.HostedAt,
 		})
 	}
 

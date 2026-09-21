@@ -75,7 +75,10 @@ type UploadSession struct {
 	FolderID    string    `json:"folder_id"`
 	OwnerID     string    `json:"owner_id"`
 	ExpiresAt   time.Time `json:"expires_at"`
-	HostedAt    string    `json:"hosted_at"`
+	// BaseURL is kept as-is on this response (not renamed to hosted_at
+	// like the request/callback fields) since the UI already consumes
+	// it under this name.
+	BaseURL string `json:"base_url"`
 }
 
 // UploadSessionBatch is the response to a batch upload-session request:
