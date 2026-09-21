@@ -5,30 +5,7 @@ package utils
 
 import (
 	"path"
-	"strings"
 )
-
-// fileLocationSep joins a storage node's base_url and a storage path
-// into the single "<base_url>;<path>" file_location string the Rust API
-// sends on session creation and expects back on the upload-result
-// callback.
-const fileLocationSep = ";"
-
-// SplitFileLocation splits a "<base_url>;<path>" file_location string
-// into its base_url and path halves. If the separator isn't found, the
-// whole value is treated as the path with an empty base_url.
-func SplitFileLocation(location string) (baseURL, path string) {
-	if before, after, ok := strings.Cut(location, fileLocationSep); ok {
-		return before, after
-	}
-	return "", location
-}
-
-// JoinFileLocation rebuilds the complete "<base_url>;<path>"
-// file_location string from its two halves.
-func JoinFileLocation(baseURL, path string) string {
-	return baseURL + fileLocationSep + path
-}
 
 // Storage keys are backend-agnostic, forward-slash separated strings
 // (never absolute filesystem paths) — not derived here. Each Storage

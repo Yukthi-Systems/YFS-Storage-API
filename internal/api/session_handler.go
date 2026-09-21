@@ -16,12 +16,17 @@ import (
 )
 
 type createUploadFileRequest struct {
-	// FileLocation is "<base_url>;<path>", given verbatim by the Rust
-	// API. Only the path half is meaningful to the Storage API — the
-	// Storage API always responds with its own base_url
-	// (session.UploadStorageBaseURL) rather than the one embedded here.
+	// FileLocation is the complete destination storage key, given
+	// verbatim by the Rust API. Unlike download/WOPI, it no longer
+	// carries a "<base_url>;" prefix — that half travels separately as
+	// HostedAt.
 	FileLocation string `json:"file_location"`
-	FileName     string `json:"file_name"`
+	// HostedAt is the base path this file is hosted under, given
+	// verbatim by the Rust API. It is cached in the session (Redis)
+	// alongside the token and echoed back, unchanged, on the
+	// upload-result callback.
+	HostedAt string `json:"hosted_at"`
+	FileName string `json:"file_name"`
 	// FolderID and OwnerID identify where this file lives in the Rust
 	// metadata service's hierarchy. The Storage API attaches no meaning
 	// to them beyond caching them in the session (Redis) alongside the
@@ -71,9 +76,8 @@ func (h *Handlers) handleCreateUploadSession(w http.ResponseWriter, r *http.Requ
 		if version <= 0 {
 			version = 1
 		}
-		baseURL, path := utils.SplitFileLocation(f.FileLocation)
 		files = append(files, session.UploadFileInput{
-			Path:        path,
+			Path:        f.FileLocation,
 			FileID:      f.FileID,
 			FolderID:    f.FolderID,
 			OwnerID:     f.OwnerID,
@@ -82,7 +86,7 @@ func (h *Handlers) handleCreateUploadSession(w http.ResponseWriter, r *http.Requ
 			// ContentType:   mime.TypeByExtension(filepath.Ext(f.FileName)),
 			MaxUploadSize: int64(f.ExpectedFileSize),
 			TTL:           time.Duration(f.MaxOperationTime) * time.Second,
-			BaseURL:       baseURL,
+			HostedAt:      f.HostedAt,
 		})
 	}
 
@@ -129,13 +133,17 @@ func decodeGrantRequest(w http.ResponseWriter, r *http.Request) (createGrantSess
 }
 
 type createDownloadFileRequest struct {
-	// FileLocation is "<base_url>;<path>", given verbatim by the Rust
-	// API — same convention as createUploadFileRequest. The base_url
-	// half is folded into this file's returned download URL so it
-	// points at whichever storage node actually holds the file.
+	// FileLocation is the complete destination storage key, given
+	// verbatim by the Rust API. It no longer carries a "<base_url>;"
+	// prefix — that half travels separately as HostedAt.
 	FileLocation string `json:"file_location"`
-	FileName     string `json:"file_name"`
-	FileID       string `json:"file_id"`
+	// HostedAt is the base path this file is hosted under, given
+	// verbatim by the Rust API. It is folded into this file's returned
+	// download URL so it points at whichever storage node actually
+	// holds the file.
+	HostedAt string `json:"hosted_at"`
+	FileName string `json:"file_name"`
+	FileID   string `json:"file_id"`
 	// FolderID and OwnerID identify where this file lives in the Rust
 	// metadata service's hierarchy. The Storage API attaches no meaning
 	// to them beyond echoing them back alongside the token.
@@ -169,15 +177,14 @@ func (h *Handlers) handleCreateDownloadSession(w http.ResponseWriter, r *http.Re
 			utils.WriteError(w, http.StatusBadRequest, "missing_fields", "file_location, file_id, folder_id and owner_id are required for every file")
 			return
 		}
-		baseURL, path := utils.SplitFileLocation(f.FileLocation)
 		files = append(files, session.DownloadFileInput{
-			Path:        path,
+			Path:        f.FileLocation,
 			FileID:      f.FileID,
 			FileName:    f.FileName,
 			FolderID:    f.FolderID,
 			OwnerID:     f.OwnerID,
 			FileVersion: f.FileVersion,
-			BaseURL:     baseURL,
+			HostedAt:    f.HostedAt,
 			TTL:         time.Duration(f.MaxOperationTime) * time.Second,
 		})
 	}
@@ -216,13 +223,12 @@ func (h *Handlers) handleCreateStreamSession(w http.ResponseWriter, r *http.Requ
 type createWOPISessionRequest struct {
 	FileName string `json:"file_name"`
 	// FileLocation is the complete storage key, given verbatim by the
-	// Rust API. Unlike upload/download, it carries no "<base_url>;"
-	// prefix to split off — that half travels separately as ServerHost.
+	// Rust API — same convention as upload/download's FileLocation.
 	FileLocation string `json:"file_location"`
 	// ServerHost is the storage node's public host for this file (e.g.
 	// "https://store-1.files.test.yukthi.net"), folded into the
 	// returned WOPI URL so Collabora calls the node that actually holds
-	// the file — the WOPI equivalent of DownloadFileInput.BaseURL.
+	// the file — the WOPI equivalent of DownloadFileInput.HostedAt.
 	ServerHost string `json:"server_host"`
 	FileID     string `json:"file_id"`
 	OwnerID    string `json:"owner_id"`

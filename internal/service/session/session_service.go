@@ -97,8 +97,12 @@ type UploadFileInput struct {
 	MaxUploadSize int64
 	// TTL is this file's own session lifetime, requested by the Rust
 	// API.
-	TTL     time.Duration
-	BaseURL string
+	TTL time.Duration
+	// HostedAt is the base path this file is hosted under, given
+	// verbatim by the Rust API. The Storage API attaches no meaning to
+	// it beyond caching it in the session (Redis) so it can be echoed
+	// back on the upload-result callback.
+	HostedAt string
 }
 
 // NewUploadInput describes a requested batch of upload sessions — one
@@ -136,7 +140,7 @@ func (s *Service) CreateUploadSession(ctx context.Context, in NewUploadInput) (m
 			FileID:   f.FileID,
 			FolderID: f.FolderID,
 			OwnerID:  f.OwnerID,
-			BaseURL:  f.BaseURL,
+			HostedAt: f.HostedAt,
 			BatchID:  batchID,
 			Version:  strconv.FormatInt(int64(f.FileVersion), 10),
 			Filename: f.Filename,
@@ -158,7 +162,7 @@ func (s *Service) CreateUploadSession(ctx context.Context, in NewUploadInput) (m
 			FolderID: f.FolderID,
 			// FilePath:    f.Path,
 			MaxFileSize: f.MaxUploadSize,
-			BaseURL:     f.BaseURL,
+			HostedAt:    f.HostedAt,
 		})
 	}
 
@@ -198,11 +202,11 @@ type DownloadFileInput struct {
 	FolderID    string
 	OwnerID     string
 	FileVersion int32
-	// BaseURL is the base_url half of the file_location the Rust API
-	// sent for this file. It is folded into the returned download URL
-	// so the link points at whichever storage node actually holds the
-	// file, the same way it is threaded through upload sessions.
-	BaseURL string
+	// HostedAt is the base path this file is hosted under, given
+	// verbatim by the Rust API. It is folded into the returned download
+	// URL so the link points at whichever storage node actually holds
+	// the file, the same way it is threaded through upload sessions.
+	HostedAt string
 	// TTL is this file's own session lifetime, requested by the Rust
 	// API.
 	TTL time.Duration
@@ -251,7 +255,7 @@ func (s *Service) CreateDownloadSession(ctx context.Context, in NewDownloadInput
 			FolderID:       f.FolderID,
 			OwnerID:        f.OwnerID,
 			FileVersion:    f.FileVersion,
-			URL:            fmt.Sprintf("%s%s%s?token=%s", strings.TrimRight(f.BaseURL, "/"), s.urls.Download, f.FileID, url.QueryEscape(tok)),
+			URL:            fmt.Sprintf("%s%s%s?token=%s", strings.TrimRight(f.HostedAt, "/"), s.urls.Download, f.FileID, url.QueryEscape(tok)),
 			AccessToken:    tok,
 			ExpiresAt:      expiresAt,
 			AccessTokenTTL: expiresAt.UnixMilli(),

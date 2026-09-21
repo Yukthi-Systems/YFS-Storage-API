@@ -38,7 +38,7 @@ const (
 	metaFolderIDKey    = "folder_id"
 	metaOwnerIDKey     = "owner_id"
 	metaVersionKey     = "version"
-	metaBaseURLKey     = "base_url"
+	metaHostedAtKey    = "hosted_at"
 )
 
 // filenameKeys/filetypeKeys are the client-supplied tus Upload-Metadata
@@ -247,7 +247,7 @@ func (w *wiring) preCreate(hook tusd.HookEvent) (tusd.HTTPResponse, tusd.FileInf
 	metaData[metaFolderIDKey] = claims.FolderID
 	metaData[metaOwnerIDKey] = claims.OwnerID
 	metaData[metaVersionKey] = claims.Version
-	metaData[metaBaseURLKey] = claims.BaseURL
+	metaData[metaHostedAtKey] = claims.HostedAt
 	if claims.ContentType != "" {
 		metaData[metaContentTypeKey] = claims.ContentType
 	}
@@ -313,7 +313,7 @@ func (w *wiring) preFinish(hook tusd.HookEvent) (tusd.HTTPResponse, error) {
 		FolderID:    hook.Upload.MetaData[metaFolderIDKey],
 		OwnerID:     hook.Upload.MetaData[metaOwnerIDKey],
 		FileVersion: hook.Upload.MetaData[metaVersionKey],
-		BaseURL:     hook.Upload.MetaData[metaBaseURLKey],
+		HostedAt:    hook.Upload.MetaData[metaHostedAtKey],
 		Metadata:    uploadResultMetadata(hook.Upload.MetaData),
 		Reader:      reader,
 		Size:        hook.Upload.Size,

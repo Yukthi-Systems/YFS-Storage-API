@@ -34,10 +34,10 @@ type Claims struct {
 	FileID   string      `json:"file_id,omitempty"`
 	FolderID string      `json:"folder_id,omitempty"`
 	OwnerID  string      `json:"owner_id,omitempty"`
-	// BaseURL is the base_url half of the file_location the Rust API
-	// sent at session-creation time, cached here purely so it can be
-	// echoed back — complete with Path — in the upload-result callback.
-	BaseURL       string `json:"base_url,omitempty"`
+	// HostedAt is the base path the Rust API sent alongside file_location
+	// at upload session-creation time, cached here purely so it can be
+	// echoed back in the upload-result callback.
+	HostedAt      string `json:"hosted_at,omitempty"`
 	UploadID      string `json:"upload_id,omitempty"`
 	Version       string `json:"version,omitempty"`
 	ContentType   string `json:"content_type,omitempty"`
@@ -75,7 +75,7 @@ type UploadSession struct {
 	FolderID    string    `json:"folder_id"`
 	OwnerID     string    `json:"owner_id"`
 	ExpiresAt   time.Time `json:"expires_at"`
-	BaseURL     string    `json:"base_url"`
+	HostedAt    string    `json:"hosted_at"`
 }
 
 // UploadSessionBatch is the response to a batch upload-session request:
@@ -146,6 +146,7 @@ type UploadCallback struct {
 	OwnerID      string          `json:"owner_id"`
 	FileVersion  int32           `json:"file_version"`
 	FileLocation string          `json:"file_location"`
+	HostedAt     string          `json:"hosted_at"`
 	FileSize     int64           `json:"file_size"`
 	Metadata     json.RawMessage `json:"metadata"`
 	FileHash     string          `json:"file_hash"`

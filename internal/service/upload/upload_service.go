@@ -32,7 +32,7 @@ type Notifier interface {
 type NoopNotifier struct{}
 
 func (NoopNotifier) NotifyUploadResult(ctx context.Context, success bool, cb models.UploadCallback) error {
-	slog.Info("upload_callback", "success", success, "folder_id", cb.FolderID, "file_id", cb.FileID, "owner_id", cb.OwnerID, "file_version", cb.FileVersion, "file_location", cb.FileLocation, "file_size", cb.FileSize, "file_hash", cb.FileHash)
+	slog.Info("upload_callback", "success", success, "folder_id", cb.FolderID, "file_id", cb.FileID, "owner_id", cb.OwnerID, "file_version", cb.FileVersion, "file_location", cb.FileLocation, "hosted_at", cb.HostedAt, "file_size", cb.FileSize, "file_hash", cb.FileHash)
 	return nil
 }
 
@@ -81,11 +81,10 @@ type CommitInput struct {
 	// FileVersion is the upload token's claims.Version, carried through
 	// only to report back on the upload-result callback.
 	FileVersion string
-	// BaseURL is the base_url half of the file_location the Rust API
-	// originally sent (see claims.BaseURL). Carried through only to
-	// rebuild the complete file_location reported back on the
-	// upload-result callback.
-	BaseURL string
+	// HostedAt is the base path the Rust API originally sent alongside
+	// file_location (see claims.HostedAt). Carried through only to
+	// report back, unchanged, on the upload-result callback.
+	HostedAt string
 	// Metadata is client-supplied tus upload metadata (e.g. filename,
 	// filetype), reshaped by the caller into the JSON object reported on
 	// the upload-result callback's Metadata field. Nil reports as "{}".
@@ -113,7 +112,8 @@ func (m *Manager) Commit(ctx context.Context, in CommitInput) (result models.Com
 			FileID:       in.FileID,
 			OwnerID:      in.OwnerID,
 			FileVersion:  parseFileVersion(in.FileVersion),
-			FileLocation: utils.JoinFileLocation(in.BaseURL, in.Path),
+			FileLocation: in.Path,
+			HostedAt:     in.HostedAt,
 			FileSize:     result.Size,
 			Metadata:     in.Metadata,
 			FileHash:     result.Checksum,

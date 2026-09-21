@@ -84,6 +84,14 @@ func (h *Handlers) handleWOPIPutFile(w http.ResponseWriter, r *http.Request) {
 		contentType = "application/octet-stream"
 	}
 
+	isAutosave := r.Header.Get("X-COOL-WOPI-IsAutosave")
+	isExitSave := r.Header.Get("X-COOL-WOPI-IsExitSave")
+	slog.InfoContext(r.Context(), "wopi: put file",
+		"file_id", fileID,
+		"is_autosave", isAutosave,
+		"is_exit_save", isExitSave,
+	)
+
 	err := h.WOPI.PutFile(r.Context(), claims.Path, fileID, lockID, r.Body, r.ContentLength, contentType)
 	if writeWOPILockError(w, err) {
 		return
