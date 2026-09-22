@@ -176,3 +176,40 @@ func parseFileVersion(v string) int32 {
 func (m *Manager) Abort(ctx context.Context, uploadID string) error {
 	return m.store.Delete(ctx, utils.UploadKey(uploadID))
 }
+
+// CancelInput describes a tus upload that was explicitly terminated
+// (client DELETE) before it ever reached Commit. Unlike CommitInput, no
+// bytes ever reached the store.Storage backend — tusd's own termination
+// already cleared its local staging copy — so there is nothing here to
+// promote or clean up, only the Rust API to notify.
+type CancelInput struct {
+	UploadID    string
+	FileID      string
+	Path        string
+	FolderID    string
+	OwnerID     string
+	FileVersion string
+	HostedAt    string
+	Metadata    json.RawMessage
+}
+
+// NotifyCancelled reports an explicitly cancelled, never-finished
+// upload to the Rust API as a failed upload-result callback. Without
+// this, a cancelled upload never reaches Commit and is otherwise
+// reported nowhere. As with Commit's failure path, FileHash carries a
+// random placeholder and any notifier error is only ever logged.
+func (m *Manager) NotifyCancelled(ctx context.Context, in CancelInput) {
+	cb := models.UploadCallback{
+		FolderID:     in.FolderID,
+		FileID:       in.FileID,
+		OwnerID:      in.OwnerID,
+		FileVersion:  parseFileVersion(in.FileVersion),
+		FileLocation: in.Path,
+		HostedAt:     in.HostedAt,
+		Metadata:     in.Metadata,
+		FileHash:     randomFileHash(),
+	}
+	if err := m.notifier.NotifyUploadResult(ctx, false, cb); err != nil {
+		slog.Error("upload cancel callback failed", "error", err, "file_location", cb.FileLocation, "upload_id", in.UploadID)
+	}
+}

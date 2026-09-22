@@ -101,12 +101,13 @@ func NewHandler(cfg Config) (http.Handler, error) {
 	w := &wiring{issuer: cfg.Issuer, manager: cfg.Manager, logger: cfg.Logger, composer: composer, basePath: strings.TrimSuffix(cfg.BasePath, "/")}
 
 	tusdHandler, err := tusd.NewHandler(tusd.Config{
-		BasePath:                  cfg.BasePath,
-		StoreComposer:             composer,
-		MaxSize:                   cfg.MaxSize,
-		Cors:                      corsConfig(cfg.CorsAllowedOrigins),
-		PreUploadCreateCallback:   w.preCreate,
-		PreFinishResponseCallback: w.preFinish,
+		BasePath:                   cfg.BasePath,
+		StoreComposer:              composer,
+		MaxSize:                    cfg.MaxSize,
+		Cors:                       corsConfig(cfg.CorsAllowedOrigins),
+		PreUploadCreateCallback:    w.preCreate,
+		PreFinishResponseCallback:  w.preFinish,
+		PreUploadTerminateCallback: w.preTerminate,
 		// correct URL https need to append
 		RespectForwardedHeaders: true,
 	})
@@ -335,5 +336,35 @@ func (w *wiring) preFinish(hook tusd.HookEvent) (tusd.HTTPResponse, error) {
 		"size", result.Size, "content_type", result.ContentType,
 		"checksum_algo", "sha256", "checksum", result.Checksum)
 
+	return tusd.HTTPResponse{}, nil
+}
+
+// preTerminate is invoked when a client explicitly cancels an
+// in-progress upload (tus DELETE) before it ever finishes. tusd deletes
+// its own staging copy immediately after this hook returns, and since a
+// cancelled upload never reaches preFinish, this is the only place a
+// cancellation can be reported to the Rust API — without it, a
+// cancelled upload would be reported nowhere at all.
+func (w *wiring) preTerminate(hook tusd.HookEvent) (tusd.HTTPResponse, error) {
+	path := hook.Upload.MetaData[metaPathKey]
+	fileID := hook.Upload.MetaData[metaFileIDKey]
+	if path == "" || fileID == "" {
+		// preCreate always sets these; nothing meaningful to report if
+		// they're somehow missing.
+		return tusd.HTTPResponse{}, nil
+	}
+
+	w.manager.NotifyCancelled(hook.Context, upload.CancelInput{
+		UploadID:    hook.Upload.ID,
+		FileID:      fileID,
+		Path:        path,
+		FolderID:    hook.Upload.MetaData[metaFolderIDKey],
+		OwnerID:     hook.Upload.MetaData[metaOwnerIDKey],
+		FileVersion: hook.Upload.MetaData[metaVersionKey],
+		HostedAt:    hook.Upload.MetaData[metaHostedAtKey],
+		Metadata:    uploadResultMetadata(hook.Upload.MetaData),
+	})
+
+	w.logger.Info("tus_upload_cancelled", "path", path, "upload_id", hook.Upload.ID, "file_id", fileID)
 	return tusd.HTTPResponse{}, nil
 }
