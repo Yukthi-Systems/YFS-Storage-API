@@ -49,7 +49,7 @@ func (h *Handlers) handleWOPIGetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, meta, err := h.WOPI.GetFile(r.Context(), claims.Path)
+	content, meta, err := h.WOPI.GetFile(r.Context(), claims.Path, fileID)
 	if err != nil {
 		writeStreamError(w, err)
 		return
@@ -92,7 +92,21 @@ func (h *Handlers) handleWOPIPutFile(w http.ResponseWriter, r *http.Request) {
 		"is_exit_save", isExitSave,
 	)
 
-	err := h.WOPI.PutFile(r.Context(), claims.Path, fileID, lockID, r.Body, r.ContentLength, contentType)
+	err := h.WOPI.PutFile(r.Context(), wopi.PutFileInput{
+		Path:        claims.Path,
+		FileID:      fileID,
+		LockID:      lockID,
+		Reader:      r.Body,
+		Size:        r.ContentLength,
+		ContentType: contentType,
+		// TODO: re-enable with claims.IsFileVersioningEnabled once the
+		// versioning flow is finished. Forced off so PutFile overwrites
+		// the existing file in place, as before.
+		VersioningEnabled: false,
+		FolderID:          claims.FolderID,
+		OwnerID:           claims.OwnerID,
+		HostedAt:          claims.HostedAt,
+	})
 	if writeWOPILockError(w, err) {
 		return
 	}

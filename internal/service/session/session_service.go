@@ -177,17 +177,24 @@ type GrantInput struct {
 	FileID   string
 	Version  string
 	CanWrite bool // relevant only for WOPI grants
-	// Filename, OwnerID, UserID and UserName are relevant only for WOPI
-	// grants — cached into the session so CheckFileInfo can answer
-	// Collabora without another round trip to the Rust API.
+	// Filename, OwnerID, FolderID, UserID and UserName are relevant only
+	// for WOPI grants — cached into the session so CheckFileInfo (and,
+	// for FolderID/OwnerID, the new-version callback) can answer without
+	// another round trip to the Rust API.
 	Filename string
 	OwnerID  string
+	FolderID string
 	UserID   string
 	UserName string
 	// BaseURL is the storage node's public host for this file (WOPI's
 	// server_host), folded into the returned WOPI URL the same way it
-	// is threaded through download sessions — see DownloadFileInput.
+	// is threaded through download sessions — see DownloadFileInput. It
+	// is also cached into the session's Claims.HostedAt so it can be
+	// echoed back on the new-version callback.
 	BaseURL string
+	// IsFileVersioningEnabled is relevant only for WOPI grants. See
+	// models.Claims.IsFileVersioningEnabled.
+	IsFileVersioningEnabled bool
 	// TTL is the session lifetime requested by the Rust API.
 	TTL time.Duration
 }
@@ -288,14 +295,17 @@ func (s *Service) CreateStreamSession(ctx context.Context, in GrantInput) (model
 // edit or view a single file.
 func (s *Service) CreateWOPISession(ctx context.Context, in GrantInput) (models.DownloadSession, error) {
 	tok, expiresAt, err := s.issuer.GenerateWOPIToken(ctx, models.Claims{
-		Path:     in.Path,
-		FileID:   in.FileID,
-		Version:  in.Version,
-		CanWrite: in.CanWrite,
-		Filename: in.Filename,
-		OwnerID:  in.OwnerID,
-		UserID:   in.UserID,
-		UserName: in.UserName,
+		Path:                    in.Path,
+		FileID:                  in.FileID,
+		FolderID:                in.FolderID,
+		Version:                 in.Version,
+		CanWrite:                in.CanWrite,
+		Filename:                in.Filename,
+		OwnerID:                 in.OwnerID,
+		UserID:                  in.UserID,
+		UserName:                in.UserName,
+		HostedAt:                in.BaseURL,
+		IsFileVersioningEnabled: in.IsFileVersioningEnabled,
 	}, in.TTL)
 	if err != nil {
 		return models.DownloadSession{}, fmt.Errorf("session: generating wopi token: %w", err)

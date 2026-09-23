@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	"github.com/Yukthi-Systems/YFS-Storage-API/internal/middleware"
 	"github.com/Yukthi-Systems/YFS-Storage-API/internal/storage"
@@ -200,4 +202,56 @@ func writeFileError(w http.ResponseWriter, err error) {
 		return
 	}
 	utils.WriteError(w, http.StatusInternalServerError, "file_error", err.Error())
+}
+
+// handleInternalFileDownload streams a file's raw bytes to another
+// trusted internal service (e.g. the Archive API building a zip), given
+// its complete storage path in the file_location query parameter. Unlike
+// /download/{fileID}, there is no session token or filename involved —
+// the caller authenticates with X-API-Token and gets bare octet-stream
+// content.
+func (h *Handlers) handleInternalFileDownload(w http.ResponseWriter, r *http.Request) {
+	location := r.URL.Query().Get("file_location")
+	if location == "" {
+		utils.WriteError(w, http.StatusBadRequest, "missing_fields", "file_location is required")
+		return
+	}
+	key, err := cleanFileLocation(location)
+	if err != nil {
+		utils.WriteError(w, http.StatusBadRequest, "invalid_path", err.Error())
+		return
+	}
+	middleware.AddLogFields(r.Context(), slog.String("path", key))
+
+	content, meta, err := h.Download.Open(r.Context(), key)
+	if err != nil {
+		writeFileError(w, err)
+		return
+	}
+	defer content.Close()
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	// ServeContent sets Content-Length from the seeker and, for a local
+	// *os.File, copies via sendfile rather than buffering in memory.
+	http.ServeContent(w, r, "", meta.ModTime, content)
+}
+
+// cleanFileLocation validates a caller-supplied storage path before it
+// reaches the storage driver. Paths come from the Rust API's database and
+// are trusted, but a ".." segment is never legitimate and — with
+// LOCAL_BASE_PATH="/" — the driver's own base-path check cannot catch it,
+// so it is rejected here outright rather than cleaned away.
+func cleanFileLocation(location string) (string, error) {
+	if strings.ContainsRune(location, 0) {
+		return "", errors.New("file_location contains a NUL byte")
+	}
+	for _, seg := range strings.Split(filepath.ToSlash(location), "/") {
+		if seg == ".." {
+			return "", errors.New("file_location must not contain '..'")
+		}
+	}
+	if strings.HasSuffix(location, "/") {
+		return "", errors.New("file_location must name a file, not a directory")
+	}
+	return filepath.Clean(location), nil
 }

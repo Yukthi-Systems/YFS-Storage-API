@@ -12,9 +12,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"path"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/Yukthi-Systems/YFS-Storage-API/internal/models"
 	"github.com/Yukthi-Systems/YFS-Storage-API/internal/storage"
+	"github.com/Yukthi-Systems/YFS-Storage-API/internal/utils"
 )
 
 // ErrLockMismatch is returned when a lock operation's lock ID does not
@@ -54,17 +60,53 @@ type FileInfo struct {
 	UserFriendlyName string `json:"UserFriendlyName,omitempty"`
 }
 
+// VersionNotifier is implemented by whatever component tells the Rust
+// API about a newly created file version, via
+// POST /internal/callback/version/new.
+type VersionNotifier interface {
+	NotifyNewVersion(ctx context.Context, cb models.NewVersionCallback) error
+}
+
+// NoopVersionNotifier logs the callback and does nothing else. It is
+// the default VersionNotifier until a real Rust API client is wired in.
+type NoopVersionNotifier struct{}
+
+func (NoopVersionNotifier) NotifyNewVersion(ctx context.Context, cb models.NewVersionCallback) error {
+	slog.Info("version_callback", "file_id", cb.FileID, "folder_id", cb.FolderID, "owner_id", cb.OwnerID, "file_location", cb.FileLocation, "hosted_at", cb.HostedAt, "file_size", cb.FileSize, "file_hash", cb.FileHash)
+	return nil
+}
+
 // Service implements the WOPI host operations against a storage.Storage
 // backend and a LockStore.
 type Service struct {
-	store   storage.Storage
-	locks   LockStore
-	lockTTL time.Duration
+	store    storage.Storage
+	locks    LockStore
+	lockTTL  time.Duration
+	notifier VersionNotifier
 }
 
-// New builds a WOPI Service.
-func New(store storage.Storage, locks LockStore, lockTTL time.Duration) *Service {
-	return &Service{store: store, locks: locks, lockTTL: lockTTL}
+// New builds a WOPI Service. notifier reports newly created versions to
+// the Rust API; a nil notifier falls back to NoopVersionNotifier.
+func New(store storage.Storage, locks LockStore, lockTTL time.Duration, notifier VersionNotifier) *Service {
+	if notifier == nil {
+		notifier = NoopVersionNotifier{}
+	}
+	return &Service{store: store, locks: locks, lockTTL: lockTTL, notifier: notifier}
+}
+
+// effectivePath returns where fileID's bytes currently live: the
+// version file created earlier in this lock's lifetime, if any,
+// otherwise the caller-supplied path unchanged. CheckFileInfo and
+// GetFile both need this so that, once a versioning-enabled session's
+// first save has redirected writes to a new version file, subsequent
+// reads within the same session see what was actually saved instead of
+// the stale original.
+func (s *Service) effectivePath(ctx context.Context, path, fileID string) string {
+	versionPath, created, err := s.locks.GetVersionState(ctx, fileID)
+	if err != nil || !created || versionPath == "" {
+		return path
+	}
+	return versionPath
 }
 
 // CheckFileInfo answers WOPI's CheckFileInfo for the file at path.
@@ -73,7 +115,7 @@ func New(store storage.Storage, locks LockStore, lockTTL time.Duration) *Service
 // session.GrantInput) — CheckFileInfo only ever echoes them back, it
 // never decides ownership or identity itself.
 func (s *Service) CheckFileInfo(ctx context.Context, path, fileID, filename string, canWrite bool, ownerID, userID, userName string) (FileInfo, error) {
-	meta, err := s.store.Stat(ctx, path)
+	meta, err := s.store.Stat(ctx, s.effectivePath(ctx, path, fileID))
 	if err != nil {
 		return FileInfo{}, fmt.Errorf("wopi: stat: %w", err)
 	}
@@ -94,25 +136,119 @@ func (s *Service) CheckFileInfo(ctx context.Context, path, fileID, filename stri
 	}, nil
 }
 
-// GetFile streams the content at path for Collabora to load.
-func (s *Service) GetFile(ctx context.Context, path string) (io.ReadCloser, storage.FileMeta, error) {
-	return s.store.Get(ctx, path)
+// GetFile streams the content at path for Collabora to load — or, if
+// fileID's current lock already created a new version this session, the
+// content of that version file instead.
+func (s *Service) GetFile(ctx context.Context, path, fileID string) (io.ReadCloser, storage.FileMeta, error) {
+	return s.store.Get(ctx, s.effectivePath(ctx, path, fileID))
 }
 
-// PutFile overwrites the content at path with what Collabora saved,
-// provided the caller holds the current lock on fileID (or the file is
-// currently unlocked, which WOPI also permits for zero-byte/new files).
-func (s *Service) PutFile(ctx context.Context, path, fileID, lockID string, r io.Reader, size int64, contentType string) error {
-	current, locked, err := s.locks.Get(ctx, fileID)
+// PutFileInput carries everything PutFile needs. FolderID, OwnerID and
+// HostedAt are only used when VersioningEnabled is true, to populate the
+// new-version callback to the Rust API.
+type PutFileInput struct {
+	Path        string
+	FileID      string
+	LockID      string
+	Reader      io.Reader
+	Size        int64
+	ContentType string
+	// VersioningEnabled mirrors the WOPI session's
+	// is_file_versioning_enabled flag (models.Claims). When true, the
+	// first PutFile of this lock's lifetime is written to a new version
+	// file instead of overwriting Path in place, and reported to the
+	// Rust API; every later PutFile under the same lock reuses that same
+	// version file.
+	VersioningEnabled bool
+	FolderID          string
+	OwnerID           string
+	HostedAt          string
+}
+
+// PutFile overwrites the content at in.Path with what Collabora saved,
+// provided the caller holds the current lock on in.FileID (or the file
+// is currently unlocked, which WOPI also permits for zero-byte/new
+// files).
+//
+// When in.VersioningEnabled is set, the first PutFile since the lock was
+// acquired (tracked via LockStore.GetVersionState/SetVersionState, not
+// this call's own memory) writes to a brand-new storage path instead of
+// in.Path, and reports it to the Rust API via s.notifier so it can
+// record the new version. Every subsequent PutFile under the same lock
+// — regardless of which WOPI session/token makes the call, since WOPI's
+// lock protocol already serializes concurrent editors of the same file —
+// reuses that same version path and is not reported again. Releasing the
+// lock (Unlock, or TTL expiry) clears this state, so the next edit
+// session creates a new version again.
+func (s *Service) PutFile(ctx context.Context, in PutFileInput) error {
+	current, locked, err := s.locks.Get(ctx, in.FileID)
 	if err != nil {
 		return err
 	}
-	if locked && current != lockID {
+	if locked && current != in.LockID {
 		return &LockConflictError{Err: ErrLockMismatch, ConflictLockID: current}
 	}
 
-	_, err = s.store.Put(ctx, path, r, size, contentType)
-	return err
+	writePath := in.Path
+	creatingVersion := false
+	if in.VersioningEnabled {
+		versionPath, created, err := s.locks.GetVersionState(ctx, in.FileID)
+		if err != nil {
+			return err
+		}
+		if created {
+			writePath = versionPath
+		} else {
+			writePath = newVersionPath(in.Path, in.FileID)
+			creatingVersion = true
+		}
+	}
+
+	var reader io.Reader = in.Reader
+	var hashing *utils.HashingReader
+	if creatingVersion {
+		hashing = utils.NewHashingReader(in.Reader)
+		reader = hashing
+	}
+
+	meta, err := s.store.Put(ctx, writePath, reader, in.Size, in.ContentType)
+	if err != nil {
+		return err
+	}
+
+	if creatingVersion {
+		if err := s.locks.SetVersionState(ctx, in.FileID, writePath, s.lockTTL); err != nil {
+			slog.ErrorContext(ctx, "wopi: recording new version state failed", "file_id", in.FileID, "path", writePath, "error", err)
+		}
+
+		fileHash := ""
+		if hashing != nil {
+			fileHash = hashing.Sum256()
+		}
+		cb := models.NewVersionCallback{
+			FolderID:     in.FolderID,
+			FileID:       in.FileID,
+			OwnerID:      in.OwnerID,
+			FileLocation: writePath,
+			HostedAt:     in.HostedAt,
+			FileSize:     meta.Size,
+			FileHash:     fileHash,
+		}
+		if err := s.notifier.NotifyNewVersion(ctx, cb); err != nil {
+			slog.ErrorContext(ctx, "wopi: new version callback failed", "file_id", in.FileID, "path", writePath, "error", err)
+		}
+	}
+
+	return nil
+}
+
+// newVersionPath derives a fresh storage key for a new version of
+// fileID, alongside originalPath's directory, so the original object is
+// left untouched and each version gets its own immutable key.
+func newVersionPath(originalPath, fileID string) string {
+	dir := path.Dir(originalPath)
+	ext := path.Ext(originalPath)
+	return fmt.Sprintf("%s/versions/%s-%s%s", dir, fileID, uuid.NewString(), ext)
 }
 
 // Lock acquires a new WOPI lock on fileID, or refreshes it if lockID
@@ -130,7 +266,8 @@ func (s *Service) Lock(ctx context.Context, fileID, lockID string) error {
 }
 
 // Unlock releases fileID's lock, provided lockID matches the current
-// holder.
+// holder. This also clears any versioning state recorded against the
+// lock, so the next edit session starts a new version.
 func (s *Service) Unlock(ctx context.Context, fileID, lockID string) error {
 	current, locked, err := s.locks.Get(ctx, fileID)
 	if err != nil {

@@ -128,7 +128,7 @@ func run() error {
 		DownloadCorsAllowedOrigins: cfg.DownloadCorsAllowedOrigins,
 		WOPISessionTTL:             cfg.WOPISessionTTL,
 		Logger:                     logger,
-		WOPI:                       wopi.New(store, wopi.NewMemoryLockStore(), 30*time.Minute),
+		WOPI:                       wopi.New(store, wopi.NewMemoryLockStore(), 30*time.Minute, rustClient),
 	}
 	mux := http.NewServeMux()
 	handlers.Register(mux, cfg.TusBasePath)

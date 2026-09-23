@@ -92,6 +92,10 @@ func (h *Handlers) Register(mux *http.ServeMux, tusBasePath string) {
 	// mux.Handle("POST /files/copy", internalOnly(http.HandlerFunc(h.handleFileCopy)))
 	// mux.Handle("POST /files/purge-prefix", internalOnly(http.HandlerFunc(h.handleFilePurgePrefix)))
 
+	// Raw file content for other trusted internal services (e.g. the
+	// Archive API fetching bytes to build a zip). Locked via X-API-Token.
+	mux.Handle("GET /internal/files/download", internalOnly(http.HandlerFunc(h.handleInternalFileDownload)))
+
 	// End-user download/stream/media, authorized by the token minted
 	// during session creation. CORS'd because, unlike every other route
 	// above, this one is called directly from the React app's browser JS

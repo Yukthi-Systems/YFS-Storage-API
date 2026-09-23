@@ -57,6 +57,12 @@ type Claims struct {
 	// "revoke/inspect this whole batch" endpoint has something to key
 	// off without needing every individual token.
 	BatchID string `json:"batch_id,omitempty"`
+	// IsFileVersioningEnabled is only meaningful for WOPI sessions. When
+	// true, the first PutFile of this lock's lifetime writes to a new
+	// version file (reported to the Rust API via NewVersionCallback)
+	// instead of overwriting Path in place; every subsequent PutFile
+	// under the same lock reuses that same version file.
+	IsFileVersioningEnabled bool `json:"is_file_versioning_enabled,omitempty"`
 }
 
 // UploadSession describes a newly created upload slot for exactly one
@@ -153,4 +159,21 @@ type UploadCallback struct {
 	FileSize     int64           `json:"file_size"`
 	Metadata     json.RawMessage `json:"metadata"`
 	FileHash     string          `json:"file_hash"`
+}
+
+// NewVersionCallback is the body POSTed to the Rust API's
+// /internal/callback/version/new endpoint the first time a
+// versioning-enabled WOPI editing session saves a change, so the Rust
+// API can record the new version and where its bytes live. Later saves
+// within the same lock's lifetime reuse this same version file and are
+// not reported again — only the one PutFile that creates it triggers
+// this callback.
+type NewVersionCallback struct {
+	FolderID     string `json:"folder_id"`
+	FileID       string `json:"file_id"`
+	OwnerID      string `json:"owner_id"`
+	FileLocation string `json:"file_location"`
+	HostedAt     string `json:"hosted_at"`
+	FileSize     int64  `json:"file_size"`
+	FileHash     string `json:"file_hash"`
 }

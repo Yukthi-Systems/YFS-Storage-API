@@ -232,6 +232,11 @@ type createWOPISessionRequest struct {
 	ServerHost string `json:"server_host"`
 	FileID     string `json:"file_id"`
 	OwnerID    string `json:"owner_id"`
+	// FolderID identifies where this file lives in the Rust metadata
+	// service's hierarchy. The Storage API attaches no meaning to it
+	// beyond caching it in the session and echoing it back on the
+	// new-version callback (see IsFileVersioningEnabled).
+	FolderID string `json:"folder_id"`
 	// UserID and UserName identify the person the session is granted
 	// to, cached so CheckFileInfo can answer Collabora's UserId/
 	// UserFriendlyName without another round trip to the Rust API.
@@ -239,6 +244,11 @@ type createWOPISessionRequest struct {
 	UserName          string `json:"user_name"`
 	LatestFileVersion int32  `json:"latest_file_version"`
 	CanWrite          bool   `json:"can_write"`
+	// IsFileVersioningEnabled, when true, makes the first PutFile of
+	// each WOPI lock's lifetime create a new version file (reported to
+	// the Rust API) instead of overwriting FileLocation in place. See
+	// models.Claims.IsFileVersioningEnabled.
+	IsFileVersioningEnabled bool `json:"is_file_versioning_enabled"`
 }
 
 func (h *Handlers) handleCreateWOPISession(w http.ResponseWriter, r *http.Request) {
@@ -252,16 +262,18 @@ func (h *Handlers) handleCreateWOPISession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	result, err := h.Session.CreateWOPISession(r.Context(), session.GrantInput{
-		Path:     req.FileLocation,
-		FileID:   req.FileID,
-		Version:  strconv.FormatInt(int64(req.LatestFileVersion), 10),
-		CanWrite: req.CanWrite,
-		Filename: req.FileName,
-		OwnerID:  req.OwnerID,
-		UserID:   req.UserID,
-		UserName: req.UserName,
-		BaseURL:  req.ServerHost,
-		TTL:      h.WOPISessionTTL,
+		Path:                    req.FileLocation,
+		FileID:                  req.FileID,
+		FolderID:                req.FolderID,
+		Version:                 strconv.FormatInt(int64(req.LatestFileVersion), 10),
+		CanWrite:                req.CanWrite,
+		Filename:                req.FileName,
+		OwnerID:                 req.OwnerID,
+		UserID:                  req.UserID,
+		UserName:                req.UserName,
+		BaseURL:                 req.ServerHost,
+		IsFileVersioningEnabled: req.IsFileVersioningEnabled,
+		TTL:                     h.WOPISessionTTL,
 	})
 	if err != nil {
 		h.Logger.Error("create wopi session failed", "error", err)
