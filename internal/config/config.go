@@ -133,7 +133,7 @@ type Config struct {
 
 	// RustCallbackBaseURL is the Rust API's own base URL, e.g.
 	// "https://yfs-api.test.yukthi.net", used by the Storage API to
-	// report upload results back to it (see internal/rustapi).
+	// report file create/delete events back to it (see internal/rustapi).
 	RustCallbackBaseURL string
 	// RustCallbackAPIKey authenticates the Storage API to the Rust
 	// API's internal callback endpoints, sent as the x-api-key header.

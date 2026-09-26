@@ -59,7 +59,7 @@ type Claims struct {
 	BatchID string `json:"batch_id,omitempty"`
 	// IsFileVersioningEnabled is only meaningful for WOPI sessions. When
 	// true, the first PutFile of this lock's lifetime writes to a new
-	// version file (reported to the Rust API via NewVersionCallback)
+	// version file (reported to the Rust API via the create callback)
 	// instead of overwriting Path in place; every subsequent PutFile
 	// under the same lock reuses that same version file.
 	IsFileVersioningEnabled bool `json:"is_file_versioning_enabled,omitempty"`
@@ -142,38 +142,20 @@ type CommitResult struct {
 	Checksum    string `json:"checksum"`
 }
 
-// UploadCallback is the body POSTed to the Rust API's
-// /internal/callback/upload/{is_success} endpoint once a tus upload has
-// been processed — successfully or not — so the Rust API can be informed
-// out-of-band. It mirrors the Rust API's own FileOpsCallBack struct
-// field-for-field; is_success travels in the URL path, not the body. On
-// failure FileHash is a random placeholder (there is no real checksum to
-// report) and the underlying error is only ever logged, never sent.
-type UploadCallback struct {
+// FileOpsCallback is the body POSTed to every Rust API file-ops
+// callback endpoint (/internal/callback/create, /internal/callback/delete,
+// ...). It mirrors the Rust API's own FileOpsCallBack struct
+// field-for-field; which operation is being reported travels in the URL
+// path, not the body. Every field is required by the Rust side, so
+// Metadata must always be a JSON object (at least "{}"), never null.
+type FileOpsCallback struct {
 	FolderID     string          `json:"folder_id"`
 	FileID       string          `json:"file_id"`
 	OwnerID      string          `json:"owner_id"`
 	FileVersion  int32           `json:"file_version"`
-	FileLocation string          `json:"file_location"`
 	HostedAt     string          `json:"hosted_at"`
+	FileLocation string          `json:"file_location"`
 	FileSize     int64           `json:"file_size"`
 	Metadata     json.RawMessage `json:"metadata"`
 	FileHash     string          `json:"file_hash"`
-}
-
-// NewVersionCallback is the body POSTed to the Rust API's
-// /internal/callback/version/new endpoint the first time a
-// versioning-enabled WOPI editing session saves a change, so the Rust
-// API can record the new version and where its bytes live. Later saves
-// within the same lock's lifetime reuse this same version file and are
-// not reported again — only the one PutFile that creates it triggers
-// this callback.
-type NewVersionCallback struct {
-	FolderID     string `json:"folder_id"`
-	FileID       string `json:"file_id"`
-	OwnerID      string `json:"owner_id"`
-	FileLocation string `json:"file_location"`
-	HostedAt     string `json:"hosted_at"`
-	FileSize     int64  `json:"file_size"`
-	FileHash     string `json:"file_hash"`
 }

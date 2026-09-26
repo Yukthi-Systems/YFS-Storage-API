@@ -9,6 +9,7 @@ package wopi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -62,17 +63,17 @@ type FileInfo struct {
 
 // VersionNotifier is implemented by whatever component tells the Rust
 // API about a newly created file version, via
-// POST /internal/callback/version/new.
+// POST /internal/callback/create.
 type VersionNotifier interface {
-	NotifyNewVersion(ctx context.Context, cb models.NewVersionCallback) error
+	NotifyCreate(ctx context.Context, cb models.FileOpsCallback) error
 }
 
 // NoopVersionNotifier logs the callback and does nothing else. It is
 // the default VersionNotifier until a real Rust API client is wired in.
 type NoopVersionNotifier struct{}
 
-func (NoopVersionNotifier) NotifyNewVersion(ctx context.Context, cb models.NewVersionCallback) error {
-	slog.Info("version_callback", "file_id", cb.FileID, "folder_id", cb.FolderID, "owner_id", cb.OwnerID, "file_location", cb.FileLocation, "hosted_at", cb.HostedAt, "file_size", cb.FileSize, "file_hash", cb.FileHash)
+func (NoopVersionNotifier) NotifyCreate(ctx context.Context, cb models.FileOpsCallback) error {
+	slog.Info("version_callback", "file_id", cb.FileID, "file_version", cb.FileVersion, "folder_id", cb.FolderID, "owner_id", cb.OwnerID, "file_location", cb.FileLocation, "hosted_at", cb.HostedAt, "file_size", cb.FileSize, "file_hash", cb.FileHash)
 	return nil
 }
 
@@ -143,9 +144,10 @@ func (s *Service) GetFile(ctx context.Context, path, fileID string) (io.ReadClos
 	return s.store.Get(ctx, s.effectivePath(ctx, path, fileID))
 }
 
-// PutFileInput carries everything PutFile needs. FolderID, OwnerID and
-// HostedAt are only used when VersioningEnabled is true, to populate the
-// new-version callback to the Rust API.
+// PutFileInput carries everything PutFile needs. FolderID, OwnerID,
+// HostedAt, FileVersion and Filename are only used when
+// VersioningEnabled is true, to populate the create callback to the Rust
+// API.
 type PutFileInput struct {
 	Path        string
 	FileID      string
@@ -163,6 +165,11 @@ type PutFileInput struct {
 	FolderID          string
 	OwnerID           string
 	HostedAt          string
+	// FileVersion is the version number the new version file is
+	// reported under — the session's latest version plus one.
+	FileVersion int32
+	// Filename is reported as metadata.file_name on the create callback.
+	Filename string
 }
 
 // PutFile overwrites the content at in.Path with what Collabora saved,
@@ -225,16 +232,22 @@ func (s *Service) PutFile(ctx context.Context, in PutFileInput) error {
 		if hashing != nil {
 			fileHash = hashing.Sum256()
 		}
-		cb := models.NewVersionCallback{
+		metadata, _ := json.Marshal(map[string]string{
+			"file_name": in.Filename,
+			"file_type": in.ContentType,
+		})
+		cb := models.FileOpsCallback{
 			FolderID:     in.FolderID,
 			FileID:       in.FileID,
 			OwnerID:      in.OwnerID,
+			FileVersion:  in.FileVersion,
 			FileLocation: writePath,
 			HostedAt:     in.HostedAt,
 			FileSize:     meta.Size,
+			Metadata:     metadata,
 			FileHash:     fileHash,
 		}
-		if err := s.notifier.NotifyNewVersion(ctx, cb); err != nil {
+		if err := s.notifier.NotifyCreate(ctx, cb); err != nil {
 			slog.ErrorContext(ctx, "wopi: new version callback failed", "file_id", in.FileID, "path", writePath, "error", err)
 		}
 	}

@@ -106,6 +106,8 @@ func (h *Handlers) handleWOPIPutFile(w http.ResponseWriter, r *http.Request) {
 		FolderID:          claims.FolderID,
 		OwnerID:           claims.OwnerID,
 		HostedAt:          claims.HostedAt,
+		FileVersion:       nextFileVersion(claims.Version),
+		Filename:          claims.Filename,
 	})
 	if writeWOPILockError(w, err) {
 		return
@@ -169,4 +171,15 @@ func writeWOPILockError(w http.ResponseWriter, err error) bool {
 	w.Header().Set("X-WOPI-Lock", conflict.ConflictLockID)
 	w.WriteHeader(http.StatusConflict)
 	return true
+}
+
+// nextFileVersion returns the version number a WOPI-created version is
+// reported under: one past the session's latest_file_version (cached in
+// claims.Version). An unparseable version reports as 1.
+func nextFileVersion(latest string) int32 {
+	n, err := strconv.ParseInt(latest, 10, 32)
+	if err != nil {
+		return 1
+	}
+	return int32(n) + 1
 }

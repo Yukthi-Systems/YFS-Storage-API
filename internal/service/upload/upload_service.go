@@ -21,23 +21,34 @@ import (
 )
 
 // Notifier is implemented by whatever component tells the Rust API
-// whether an upload succeeded or failed, via
-// POST /internal/callback/upload/{is_success}.
+// about an upload's outcome: POST /internal/callback/create on success,
+// POST /internal/callback/delete on failure or cancellation.
 type Notifier interface {
-	NotifyUploadResult(ctx context.Context, success bool, cb models.UploadCallback) error
+	NotifyCreate(ctx context.Context, cb models.FileOpsCallback) error
+	NotifyDelete(ctx context.Context, cb models.FileOpsCallback) error
 }
 
 // NoopNotifier logs the callback and does nothing else. It is the
 // default Notifier until a real Rust API client is wired in.
 type NoopNotifier struct{}
 
-func (NoopNotifier) NotifyUploadResult(ctx context.Context, success bool, cb models.UploadCallback) error {
-	slog.Info("upload_callback", "success", success, "folder_id", cb.FolderID, "file_id", cb.FileID, "owner_id", cb.OwnerID, "file_version", cb.FileVersion, "file_location", cb.FileLocation, "hosted_at", cb.HostedAt, "file_size", cb.FileSize, "file_hash", cb.FileHash)
+func (NoopNotifier) NotifyCreate(ctx context.Context, cb models.FileOpsCallback) error {
+	logCallback("create", cb)
 	return nil
 }
 
+func (NoopNotifier) NotifyDelete(ctx context.Context, cb models.FileOpsCallback) error {
+	logCallback("delete", cb)
+	return nil
+}
+
+func logCallback(op string, cb models.FileOpsCallback) {
+	slog.Info("upload_callback", "op", op, "folder_id", cb.FolderID, "file_id", cb.FileID, "owner_id", cb.OwnerID, "file_version", cb.FileVersion, "file_location", cb.FileLocation, "hosted_at", cb.HostedAt, "file_size", cb.FileSize, "file_hash", cb.FileHash)
+}
+
 // randomFileHash produces a sha256-shaped placeholder for FileOpsCallBack.
-// file_hash when an upload failed and there is no real checksum to report.
+// file_hash on a delete callback, where there is no real checksum to
+// report but the Rust API still requires the field.
 func randomFileHash() string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -102,12 +113,14 @@ type CommitInput struct {
 // upload into uploads/<upload-id>, computes its checksum as a side effect
 // of that single pass, and promotes it to its final Path. Either way —
 // success or failure — it reports the outcome to the Rust API via
-// m.notifier before returning; on failure the callback carries a random
-// placeholder file_hash (there is no real checksum) and the error itself
-// is only ever logged, never sent.
+// m.notifier before returning: a create callback on success, a delete
+// callback on failure so the Rust API drops the version it reserved for
+// this upload. The delete callback carries a random placeholder
+// file_hash (there is no real checksum) and the error itself is only
+// ever logged, never sent.
 func (m *Manager) Commit(ctx context.Context, in CommitInput) (result models.CommitResult, err error) {
 	defer func() {
-		cb := models.UploadCallback{
+		cb := models.FileOpsCallback{
 			FolderID:     in.FolderID,
 			FileID:       in.FileID,
 			OwnerID:      in.OwnerID,
@@ -119,10 +132,14 @@ func (m *Manager) Commit(ctx context.Context, in CommitInput) (result models.Com
 			FileHash:     result.Checksum,
 		}
 		success := err == nil
-		if !success {
+		var notifyErr error
+		if success {
+			notifyErr = m.notifier.NotifyCreate(ctx, cb)
+		} else {
 			cb.FileHash = randomFileHash()
+			notifyErr = m.notifier.NotifyDelete(ctx, cb)
 		}
-		if notifyErr := m.notifier.NotifyUploadResult(ctx, success, cb); notifyErr != nil {
+		if notifyErr != nil {
 			slog.Error("upload callback failed", "error", notifyErr, "file_location", cb.FileLocation, "upload_id", in.UploadID, "success", success)
 		}
 	}()
@@ -194,12 +211,12 @@ type CancelInput struct {
 }
 
 // NotifyCancelled reports an explicitly cancelled, never-finished
-// upload to the Rust API as a failed upload-result callback. Without
+// upload to the Rust API as a delete callback. Without
 // this, a cancelled upload never reaches Commit and is otherwise
 // reported nowhere. As with Commit's failure path, FileHash carries a
 // random placeholder and any notifier error is only ever logged.
 func (m *Manager) NotifyCancelled(ctx context.Context, in CancelInput) {
-	cb := models.UploadCallback{
+	cb := models.FileOpsCallback{
 		FolderID:     in.FolderID,
 		FileID:       in.FileID,
 		OwnerID:      in.OwnerID,
@@ -209,7 +226,7 @@ func (m *Manager) NotifyCancelled(ctx context.Context, in CancelInput) {
 		Metadata:     in.Metadata,
 		FileHash:     randomFileHash(),
 	}
-	if err := m.notifier.NotifyUploadResult(ctx, false, cb); err != nil {
+	if err := m.notifier.NotifyDelete(ctx, cb); err != nil {
 		slog.Error("upload cancel callback failed", "error", err, "file_location", cb.FileLocation, "upload_id", in.UploadID)
 	}
 }
