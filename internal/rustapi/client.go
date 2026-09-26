@@ -75,15 +75,17 @@ func (c *Client) post(ctx context.Context, path string, body any) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(apiKeyHeader, c.apiKey)
 
+	start := time.Now()
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("rustapi: calling %s: %w", path, err)
 	}
 	defer resp.Body.Close()
 
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("rustapi: %s returned status %d: %s (sent body: %s)", path, resp.StatusCode, string(respBody), string(payload))
 	}
+	slog.DebugContext(ctx, "rustapi_callback", "url", c.baseURL+path, "status", resp.StatusCode, "latency", time.Since(start), "body", string(payload), "response", string(respBody))
 	return nil
 }
